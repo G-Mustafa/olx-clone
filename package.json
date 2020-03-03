@@ -1,0 +1,19 @@
+{
+  "name": "olx-clone",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/G-Mustafa/olx-clone.git"
+  },
+  "author": "Ghulam Mustafa",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/G-Mustafa/olx-clone/issues"
+  },
+  "homepage": "https://github.com/G-Mustafa/olx-clone#readme"
+}
