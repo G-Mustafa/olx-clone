@@ -53,8 +53,11 @@
                 </li>
             </ul>
             <form class="form-inline my-2 my-lg-0">
-                <select class="form-control mr-sm-2">
-                    <option>Small select</option>
+                <select id='location' class="form-control mr-sm-2">
+                    <option value='none' selected>Select location</option>
+                    <option value='Pakistan'>Pakistan</option>
+                    <option value='India'>India</option>
+                    <option value='Bangladesh'>Bangladesh</option>
                 </select>
             </form>
 
@@ -64,6 +67,7 @@
             </form>
         </div>
     </nav>
+    <div id="msg-box"></div>
     <div id="app"></div>
 
     <script type="text/javascript" src="./js/jquery-3.4.1.min.js"></script>
