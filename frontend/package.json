@@ -4,7 +4,7 @@
   "description": "",
   "private": true,
   "scripts": {
-    "build": "webpack"
+    "build": "webpack --config webpack.config.js"
   },
   "repository": {
     "type": "git",
@@ -17,7 +17,7 @@
   },
   "homepage": "https://github.com/G-Mustafa/olx-clone#readme",
   "dependencies": {
-    "dotenv": "^8.2.0"
+    "dotenv-webpack": "^1.7.0"
   },
   "devDependencies": {
     "webpack": "^4.42.0",
