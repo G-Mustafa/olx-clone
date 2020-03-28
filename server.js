@@ -27,7 +27,11 @@ pgPool.on('error', err => {
 
 
 app.use(bodyParser.json());
-app.use('/static', express.static(path.join(__dirname, 'public'), { extensions: ['jpeg','jpg', 'png'] }));
+app.use('/static', express.static(path.join(__dirname, 'public'), {fallthrough:true ,extensions: ['jpeg','jpg', 'png'] }),(req,res) => {
+    const match = /\/(ads|profiles)\/\w{8}-\w{4}-\w{4}-\w{4}-\w{12}/.exec(req.url);
+    if(match) return res.redirect(`/static/${match[1]}/placeholder.png`);
+    //redirect to error handler
+});
 app.use(cors({ origin: 'http://127.0.0.1:5500', credentials: true }))
 app.use(session({
     store: new pgSession({
