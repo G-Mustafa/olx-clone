@@ -12,12 +12,20 @@ const Busboy = require('busboy');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const jwt = require('jsonwebtoken');
+const url = require('url')
+
 
 const options = {
     hostname: "demo.local",
-    key: fs.readFileSync(path.join(__dirname+"/ssl/demo.local.key")),
-    cert: fs.readFileSync(path.join(__dirname+"/ssl/demo.local.crt"))
+    key: fs.readFileSync(path.join(__dirname + "/ssl/demo.local.key")),
+    cert: fs.readFileSync(path.join(__dirname + "/ssl/demo.local.crt"))
 };
+
+const server = https.createServer(options, app);
+const io = require('socket.io')(server, { cookie: false });
+
+
 const PORT = process.env.PORT || 3000;
 
 pgPool.on('error', err => {
@@ -27,12 +35,14 @@ pgPool.on('error', err => {
 
 
 app.use(bodyParser.json());
-app.use('/static', express.static(path.join(__dirname, 'public'), {fallthrough:true ,extensions: ['jpeg','jpg', 'png'] }),(req,res) => {
+app.use('/static', express.static(path.join(__dirname, 'public'), { fallthrough: true, extensions: ['jpeg', 'jpg', 'png'] }), (req, res) => {
     const match = /\/(ads|profiles)\/\w{8}-\w{4}-\w{4}-\w{4}-\w{12}/.exec(req.url);
-    if(match) return res.redirect(`/static/${match[1]}/placeholder.png`);
+    if (match) return res.redirect(`/static/${match[1]}/placeholder.png`);
     //redirect to error handler
 });
 app.use(cors({ origin: 'http://127.0.0.1:5500', credentials: true }))
+
+
 app.use(session({
     store: new pgSession({
         pool: pgPool,
@@ -41,7 +51,7 @@ app.use(session({
     secret: process.env.COOKIE_SECRET,
     resave: false,
     saveUninitialized: false,
-    cookie: { maxAge: 30 * 24 * 60 * 60 * 1000,sameSite:'none',secure:true }
+    cookie: { maxAge: 10 * 24 * 3600, sameSite: 'none', secure: true }
 }));
 
 
@@ -52,19 +62,31 @@ class ValidationError extends Error {
         this.name = 'Validation Error'
     }
 }
-function sanitize(str) {
-    const map = {
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#x27;',
-        "/": '&#x2F;',
-        "`": '&#96;'
-    };
-    const reg = /[&<>"'/]/ig;
-    return str.replace(reg, (match)=>(map[match]));
-}
+
+
+io.on('connection', async socket => {
+    try {
+        const { token, id } = socket.handshake.query;
+        if (!(token && id)) throw new Error('token and/or id missing');
+        const data = jwt.verify(token, process.env.TOKEN_SECRET)
+        const query = 'SELECT COUNT(*) FROM users WHERE id=$1 AND email=$2';
+        const { rows } = await pgPool.query(query, [id, data])
+        if (rows[0].count == 1) {
+            const query = 'INSERT INTO active (user_id,socket_id) VALUES ($1,$2)';
+            await pgPool.query(query,[id,socket.id]);
+            socket.on('chat message', (msg,receiver) => {
+                console.log(msg);
+                console.log(receiver);
+            })
+            socket.on('disconnect', async () => {
+                const query = 'DELETE FROM active WHERE socket_id=$1';
+                await pgPool.query(query,[socket.id]);
+            });
+        }
+    } catch (err) {
+        console.log(err);
+    }
+});
 
 app.post("/search", async (req, res) => {
     try {
@@ -80,8 +102,8 @@ app.post("/search", async (req, res) => {
         const query = 'SELECT ad_id,title FROM ads WHERE country=$1 AND title LIKE $2 ORDER BY issuedAt DESC LIMIT 10 OFFSET $3';
         const { rows } = await pgPool.query(query, [req.session.country, searchesArr[0], Number(offset)]);
         res.json({ search: rows });
-    } catch (e) {
-        console.log(e);
+    } catch (err) {
+        console.log(err);
         res.status(500).end();
     }
 })
@@ -99,42 +121,59 @@ app.post("/ad/new", async (req, res) => {
         } else {
             throw new ValidationError('Incomplete form');
         }
-    } catch (e) {
-        if (e.name === 'Validation Error')
-            return res.json({ err: e.message })
-        console.log(e);
+    } catch (err) {
+        if (err.name === 'Validation Error')
+            return res.json({ err: err.message })
+        console.log(err);
         res.status(500).end();
     }
 })
 
-app.get("/users/logout",(req,res) => {
+app.get("/users/logout", (req, res) => {
     req.session.user_id = null;
-    res.json({status:true}).end();
+    res.json({ status: true }).end();
 })
 
 
-app.get("/users/login",(req,res) => {
-    res.json({id:req.session.user_id});
+app.get("/users/login", async (req, res) => {
+    try {
+        const id = req.session.user_id || req.query.id;
+        req.session.user_id = id;
+        if (id === null || id === undefined) return res.json({ id: null })
+        let email = req.query.email;
+        if (!email) {
+            const query = 'SELECT email FROM users WHERE id=$1';
+            const { rows } = await pgPool.query(query, [id])
+            if (!rows.length) throw new Error()
+            email = rows[0].email;
+        }
+        const token = jwt.sign(email, process.env.TOKEN_SECRET)
+        res.json({ id, token });
+    } catch (err) {
+        console.log(err);
+        res.status(500).end();
+    }
 })
 
-app.post("/users/login",async (req,res) => {
-    try{
-        let {email,password} = req.body;
-        console.log(email,password);
-        email = sanitize(email);
-        if(!(email && password)) throw new ValidationError("Email or Password missing");
+app.post("/users/login", async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        if (!(email && password)) throw new ValidationError("Email or Password missing");
         const query = "SELECT pass,id FROM users WHERE email=$1";
-        const {rows} = await pgPool.query(query,[email]);
-        console.log(password);
-        if(!rows.length) throw new ValidationError('Email not registered.');
-        const result = await bcrypt.compare(password,rows[0].pass);
-        console.log(result);
-        if(!result) throw new ValidationError("Incorrect Password");
-        req.session.user_id = rows[0].id;
-        res.json({id:rows[0].id});
-    }catch(e){
-        if(e.name === 'Validation Error') return res.json({err:e.message});
-        console.log(e);
+        const { rows } = await pgPool.query(query, [email]);
+        if (!rows.length) throw new ValidationError('Email not registered.');
+        const result = await bcrypt.compare(password, rows[0].pass);
+        if (!result) throw new ValidationError("Incorrect Password");
+        res.redirect(url.format({
+            pathname: "/users/login",
+            query: {
+                "email": email,
+                "id": rows[0].id
+            }
+        }));
+    } catch (err) {
+        if (err.name === 'Validation Error') return res.json({ err: err.message });
+        console.log(err);
         res.status(500).end();
     }
 })
@@ -145,18 +184,21 @@ app.post("/users/signup", async (req, res) => {
         const { fullName, email, password } = req.body;
         if (!(fullName && email && password)) throw new ValidationError("incomplete form");
         const { rows } = await pgPool.query('SELECT id FROM users WHERE email=$1', [email]);
-        console.log(password);
         if (rows.length) throw new ValidationError('email already registered');
         const salt = await bcrypt.genSalt(10);
         const hash = await bcrypt.hash(password, salt);
         const query = "INSERT INTO users (fullname ,email ,pass ) VALUES ($1,$2,$3) RETURNING id";
-        const {rows:result} = await pgPool.query(query, [fullName, email, hash]);
-        console.log(result[0].id);
-        req.session.user_id = result[0].id;
-        res.json({id:result[0].id});
-    } catch (e) {
-        if (e.name === 'Validation Error') return res.json({ err: e.message });
-        console.log(e);
+        const { rows: result } = await pgPool.query(query, [fullName, email, hash]);
+        res.redirect(url.format({
+            pathname: "/users/login",
+            query: {
+                "email": email,
+                "id": result[0].id
+            }
+        }));
+    } catch (err) {
+        if (err.name === 'Validation Error') return res.json({ err: err.message });
+        console.log(err);
         res.status(500).end();
     }
 })
@@ -194,8 +236,8 @@ app.post("/ad", async (req, res) => {
         const query = "SELECT details,issuedAt,fullname,user_id,price FROM ads JOIN users ON ads.user_id=users.id WHERE ad_id=$1";
         const { rows } = await pgPool.query(query, [ad_id]);
         res.json({ ...rows[0] });
-    } catch (e) {
-        console.log(e);
+    } catch (err) {
+        console.log(err);
         res.status(500).end();
     }
 })
@@ -222,13 +264,13 @@ app.post("/", async (req, res) => {
             response['recentSearches'] = rows;
         }
         res.json(response);
-    } catch (e) {
-        console.log(e);
+    } catch (err) {
+        console.log(err);
         res.status(500).end();
     }
 })
 
-const server = https.createServer(options, app);
+
 
 server.listen(PORT, () => {
     console.log("server starting on port : " + PORT)

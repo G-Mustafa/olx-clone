@@ -133,27 +133,42 @@ function renderAd(details, issuedat, fullname, user_id, name, title, price) {
 async function loginCheck() {
   try {
     const data = await fetchReq('users/login', getReqOptions);
-    if (data.id)
-      processLogin(data.id);
-    else
+    if (data.id === null)
       processLogout();
+    else
+      processLogin(data);
   } catch (err) {
     console.log("e");
     showMsg(err.message, "danger");
   }
 }
 
-async function processLogin(id) {
+async function processLogin({id,token}) {
+  const {default:io} = await import('socket.io-client');
+  const socket = io('https://localhost:3000',{query: {id,token}})
   const headerList = document.getElementById("header-list");
-  headerList.innerHTML = `<li class="nav-item"><button name="Sell" class="btn btn-outline-success m-2">Sell</button></li><li class="nav-item dropdown"><a href="#" class="nav-link dropdown-toggle" data-toggle="dropdown"><img src="https://localhost:3000/static/profiles/${id}" width="40" height="40" class="rounded-circle"></a><div class="dropdown-menu dropdown-menu-right"><a name="Settings" href="#" class="dropdown-item">Settings</a><div class="dropdown-divider"></div><a name="Logout" href="#" class="dropdown-item">Logout</a></div></li>`;
+  headerList.innerHTML = `<li class="nav-item"><button name="Chat" class="btn btn-outline-success m-2">Chat</button></li><li class="nav-item dropdown"><a href="#" class="nav-link dropdown-toggle" data-toggle="dropdown"><img src="https://localhost:3000/static/profiles/${id}" width="40" height="40" class="rounded-circle"></a><div class="dropdown-menu dropdown-menu-right"><a name="Settings" href="#" class="dropdown-item">Settings</a><div class="dropdown-divider"></div><a name="Logout" href="#" class="dropdown-item">Logout</a></div></li>`;
   headerList.onclick = async function (e) {
     const name = e.target.name;
-    if (name === "Sell") {
-
+    if (name === "Chat") {
+      document.getElementById('app').innerHTML = `<ul id="messages"></ul>
+      <form id="chatForm">
+        <input name="msg" id="msg" autocomplete="off" /><input type="submit" value="submit">
+      </form>`;
+      const chatForm = document.getElementById('chatForm');
+      chatForm.onsubmit = function(e) {
+        e.preventDefault();
+        const msg = chatForm.msg.value;
+        if (msg) {
+          socket.emit('chat message',msg,'abc');
+          chatForm.msg.value = '';
+        }
+      }
     } else if (name === "Logout") {
       try {
         await fetchReq('users/logout', getReqOptions);
         headerList.onclick = null;
+        socket.disconnect()
         processLogout();
       } catch (err) {
         console.log('a');
@@ -196,7 +211,7 @@ function processLogout() {
         if (name === 'login') {
           const data = await fetchReq('users/login', new PostReqOptions({ email, password }));
           if (data.err) throw new Error(data.err);
-          processLogin(data.id);
+          processLogin(data);
         } else if (name === 'signup') {
           const fullName = e.target.parentNode.inputFullName.value;
           if (!fullName) return;
